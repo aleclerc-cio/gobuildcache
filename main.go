@@ -22,6 +22,8 @@ var (
 	cacheDir     string
 	s3Bucket     string
 	s3Prefix     string
+	gcsBucket    string
+	gcsPrefix    string
 	errorRate    float64
 	compression  bool
 	asyncBackend bool
@@ -68,18 +70,22 @@ func runServerCommand() {
 		cacheDirDefault     = getEnv("CACHE_DIR", filepath.Join(os.TempDir(), "gobuildcache", "cache"))
 		s3BucketDefault     = getEnv("S3_BUCKET", "")
 		s3PrefixDefault     = getEnv("S3_PREFIX", "gobuildcache/")
+		gcsBucketDefault     = getEnv("GCS_BUCKET", "")
+		gcsPrefixDefault     = getEnv("GCS_PREFIX", "gobuildcache/")
 		errorRateDefault    = getEnvFloat("ERROR_RATE", 0.0)
 		compressionDefault  = getEnvBool("COMPRESSION", true)
 		asyncBackendDefault = getEnvBool("ASYNC_BACKEND", true)
 	)
 	serverFlags.BoolVar(&debug, "debug", debugDefault, "Enable debug logging to stderr (env: DEBUG)")
 	serverFlags.BoolVar(&printStats, "stats", printStatsDefault, "Print cache statistics on exit (env: PRINT_STATS)")
-	serverFlags.StringVar(&backendType, "backend", backendDefault, "Backend type: disk (local only), s3 (env: BACKEND_TYPE)")
+	serverFlags.StringVar(&backendType, "backend", backendDefault, "Backend type: disk (local only), s3, gcs (env: BACKEND_TYPE)")
 	serverFlags.StringVar(&lockingType, "lock-type", lockTypeDefault, "Locking type: memory (in-memory), fslock (filesystem) (env: LOCK_TYPE)")
 	serverFlags.StringVar(&lockDir, "lock-dir", lockDirDefault, "Lock directory for fslock (env: LOCK_DIR)")
 	serverFlags.StringVar(&cacheDir, "cache-dir", cacheDirDefault, "Local cache directory (env: CACHE_DIR)")
 	serverFlags.StringVar(&s3Bucket, "s3-bucket", s3BucketDefault, "S3 bucket name (required for s3 backend) (env: S3_BUCKET)")
 	serverFlags.StringVar(&s3Prefix, "s3-prefix", s3PrefixDefault, "S3 key prefix (optional) (env: S3_PREFIX)")
+	serverFlags.StringVar(&gcsBucket, "gcs-bucket", gcsBucketDefault, "GCS bucket name (required for gcs backend) (env: GCS_BUCKET)")
+	serverFlags.StringVar(&gcsPrefix, "gcs-prefix", gcsPrefixDefault, "GCS object prefix (optional) (env: GCS_PREFIX)")
 	serverFlags.Float64Var(&errorRate, "error-rate", errorRateDefault, "Error injection rate (0.0-1.0) for testing error handling (env: ERROR_RATE)")
 	serverFlags.BoolVar(&compression, "compression", compressionDefault, "Enable LZ4 compression for backend storage (env: COMPRESSION)")
 	serverFlags.BoolVar(&asyncBackend, "async-backend", asyncBackendDefault, "Enable async backend writer for non-blocking PUT operations (env: ASYNC_BACKEND)")
@@ -92,12 +98,14 @@ func runServerCommand() {
 		fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
 		fmt.Fprintf(os.Stderr, "  DEBUG            Enable debug logging (true/false)\n")
 		fmt.Fprintf(os.Stderr, "  PRINT_STATS      Print cache statistics on exit (true/false)\n")
-		fmt.Fprintf(os.Stderr, "  BACKEND_TYPE     Backend type (disk, s3)\n")
+		fmt.Fprintf(os.Stderr, "  BACKEND_TYPE     Backend type (disk, s3, gcs)\n")
 		fmt.Fprintf(os.Stderr, "  LOCK_TYPE        Deduplication type (memory, fslock)\n")
 		fmt.Fprintf(os.Stderr, "  LOCK_DIR         Lock directory for fslock\n")
 		fmt.Fprintf(os.Stderr, "  CACHE_DIR        Local cache directory\n")
 		fmt.Fprintf(os.Stderr, "  S3_BUCKET        S3 bucket name\n")
 		fmt.Fprintf(os.Stderr, "  S3_PREFIX        S3 key prefix\n")
+		fmt.Fprintf(os.Stderr, "  GCS_BUCKET       GCS bucket name\n")
+		fmt.Fprintf(os.Stderr, "  GCS_PREFIX       GCS object prefix\n")
 		fmt.Fprintf(os.Stderr, "  COMPRESSION      Enable LZ4 compression (true/false)\n")
 		fmt.Fprintf(os.Stderr, "  ASYNC_BACKEND    Enable async backend writer (true/false)\n")
 		fmt.Fprintf(os.Stderr, "\nNote: Command-line flags take precedence over environment variables.\n")
@@ -106,8 +114,11 @@ func runServerCommand() {
 		fmt.Fprintf(os.Stderr, "  %s -cache-dir=/var/cache/go\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Run with S3 backend using flags:\n")
 		fmt.Fprintf(os.Stderr, "  %s -backend=s3 -s3-bucket=my-cache-bucket\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  # Run with GCS backend using flags:\n")
+		fmt.Fprintf(os.Stderr, "  %s -backend=gcs -gcs-bucket=my-cache-bucket\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Run with environment variables:\n")
 		fmt.Fprintf(os.Stderr, "  BACKEND_TYPE=s3 S3_BUCKET=my-cache-bucket %s\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  BACKEND_TYPE=gcs GCS_BUCKET=my-cache-bucket %s\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Mix environment variables and flags (flags override env):\n")
 		fmt.Fprintf(os.Stderr, "  BACKEND_TYPE=s3 %s -s3-bucket=my-cache-bucket -debug\n", os.Args[0])
 	}
@@ -125,12 +136,16 @@ func runClearCommand() {
 		cacheDirDefault = getEnv("CACHE_DIR", filepath.Join(os.TempDir(), "gobuildcache", "cache"))
 		s3BucketDefault = getEnv("S3_BUCKET", "")
 		s3PrefixDefault = getEnv("S3_PREFIX", "")
+		gcsBucketDefault = getEnv("GCS_BUCKET", "")
+		gcsPrefixDefault = getEnv("GCS_PREFIX", "")
 	)
 	clearFlags.BoolVar(&debug, "debug", debugDefault, "Enable debug logging to stderr (env: DEBUG)")
-	clearFlags.StringVar(&backendType, "backend", backendDefault, "Backend type: disk (local only), s3 (env: BACKEND_TYPE)")
+	clearFlags.StringVar(&backendType, "backend", backendDefault, "Backend type: disk (local only), s3, gcs (env: BACKEND_TYPE)")
 	clearFlags.StringVar(&cacheDir, "cache-dir", cacheDirDefault, "Local cache directory (env: CACHE_DIR)")
 	clearFlags.StringVar(&s3Bucket, "s3-bucket", s3BucketDefault, "S3 bucket name (required for s3 backend) (env: S3_BUCKET)")
 	clearFlags.StringVar(&s3Prefix, "s3-prefix", s3PrefixDefault, "S3 key prefix (optional) (env: S3_PREFIX)")
+	clearFlags.StringVar(&gcsBucket, "gcs-bucket", gcsBucketDefault, "GCS bucket name (required for gcs backend) (env: GCS_BUCKET)")
+	clearFlags.StringVar(&gcsPrefix, "gcs-prefix", gcsPrefixDefault, "GCS object prefix (optional) (env: GCS_PREFIX)")
 
 	clearFlags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s clear [flags]\n\n", os.Args[0])
@@ -140,10 +155,12 @@ func runClearCommand() {
 		fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
 		fmt.Fprintf(os.Stderr, "  DEBUG          Enable debug logging (true/false)\n")
 		fmt.Fprintf(os.Stderr, "  PRINT_STATS    Print cache statistics on exit (true/false)\n")
-		fmt.Fprintf(os.Stderr, "  BACKEND_TYPE   Backend type (disk, s3)\n")
+		fmt.Fprintf(os.Stderr, "  BACKEND_TYPE   Backend type (disk, s3, gcs)\n")
 		fmt.Fprintf(os.Stderr, "  CACHE_DIR      Local cache directory\n")
 		fmt.Fprintf(os.Stderr, "  S3_BUCKET      S3 bucket name\n")
 		fmt.Fprintf(os.Stderr, "  S3_PREFIX      S3 key prefix\n")
+		fmt.Fprintf(os.Stderr, "  GCS_BUCKET     GCS bucket name\n")
+		fmt.Fprintf(os.Stderr, "  GCS_PREFIX     GCS object prefix\n")
 		fmt.Fprintf(os.Stderr, "  S3_TMP_DIR     Local temp directory for S3 backend\n")
 		fmt.Fprintf(os.Stderr, "\nNote: Command-line flags take precedence over environment variables.\n")
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
@@ -151,6 +168,8 @@ func runClearCommand() {
 		fmt.Fprintf(os.Stderr, "  %s clear -cache-dir=/var/cache/go\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Clear S3 cache using flags:\n")
 		fmt.Fprintf(os.Stderr, "  %s clear -backend=s3 -s3-bucket=my-cache-bucket\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  # Clear GCS cache using flags:\n")
+		fmt.Fprintf(os.Stderr, "  %s clear -backend=gcs -gcs-bucket=my-cache-bucket\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Clear using environment variables:\n")
 		fmt.Fprintf(os.Stderr, "  BACKEND_TYPE=s3 S3_BUCKET=my-cache-bucket %s clear\n", os.Args[0])
 	}
@@ -206,11 +225,15 @@ func runClearRemoteCommand() {
 		backendDefault   = getEnv("BACKEND_TYPE", getEnv("BACKEND", "disk"))
 		s3BucketDefault  = getEnv("S3_BUCKET", "")
 		s3PrefixDefault  = getEnv("S3_PREFIX", "")
+		gcsBucketDefault = getEnv("GCS_BUCKET", "")
+		gcsPrefixDefault = getEnv("GCS_PREFIX", "")
 	)
 	clearRemoteFlags.BoolVar(&debug, "debug", debugDefault, "Enable debug logging to stderr (env: DEBUG)")
-	clearRemoteFlags.StringVar(&backendType, "backend", backendDefault, "Backend type: disk, s3 (env: BACKEND_TYPE)")
+	clearRemoteFlags.StringVar(&backendType, "backend", backendDefault, "Backend type: disk, s3, gcs (env: BACKEND_TYPE)")
 	clearRemoteFlags.StringVar(&s3Bucket, "s3-bucket", s3BucketDefault, "S3 bucket name (required for s3 backend) (env: S3_BUCKET)")
 	clearRemoteFlags.StringVar(&s3Prefix, "s3-prefix", s3PrefixDefault, "S3 key prefix (optional) (env: S3_PREFIX)")
+	clearRemoteFlags.StringVar(&gcsBucket, "gcs-bucket", gcsBucketDefault, "GCS bucket name (required for gcs backend) (env: GCS_BUCKET)")
+	clearRemoteFlags.StringVar(&gcsPrefix, "gcs-prefix", gcsPrefixDefault, "GCS object prefix (optional) (env: GCS_PREFIX)")
 
 	clearRemoteFlags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s clear-remote [flags]\n\n", os.Args[0])
@@ -219,13 +242,17 @@ func runClearRemoteCommand() {
 		clearRemoteFlags.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
 		fmt.Fprintf(os.Stderr, "  DEBUG          Enable debug logging (true/false)\n")
-		fmt.Fprintf(os.Stderr, "  BACKEND_TYPE   Backend type (disk, s3)\n")
+		fmt.Fprintf(os.Stderr, "  BACKEND_TYPE   Backend type (disk, s3, gcs)\n")
 		fmt.Fprintf(os.Stderr, "  S3_BUCKET      S3 bucket name\n")
 		fmt.Fprintf(os.Stderr, "  S3_PREFIX      S3 key prefix\n")
+		fmt.Fprintf(os.Stderr, "  GCS_BUCKET     GCS bucket name\n")
+		fmt.Fprintf(os.Stderr, "  GCS_PREFIX     GCS object prefix\n")
 		fmt.Fprintf(os.Stderr, "\nNote: Command-line flags take precedence over environment variables.\n")
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  # Clear S3 cache using flags:\n")
 		fmt.Fprintf(os.Stderr, "  %s clear-remote -backend=s3 -s3-bucket=my-cache-bucket\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  # Clear GCS cache using flags:\n")
+		fmt.Fprintf(os.Stderr, "  %s clear-remote -backend=gcs -gcs-bucket=my-cache-bucket\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Clear S3 cache with prefix:\n")
 		fmt.Fprintf(os.Stderr, "  %s clear-remote -backend=s3 -s3-bucket=my-cache-bucket -s3-prefix=myproject/\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Clear using environment variables:\n")
@@ -350,8 +377,15 @@ func createBackend() (backends.Backend, error) {
 
 		backend, err = backends.NewS3(s3Bucket, s3Prefix)
 
+	case "gcs":
+		if gcsBucket == "" {
+			return nil, fmt.Errorf("GCS bucket is required for GCS backend (set via -gcs-bucket flag or GCS_BUCKET env var)")
+		}
+
+		backend, err = backends.NewGCS(gcsBucket, gcsPrefix)
+
 	default:
-		return nil, fmt.Errorf("unknown backend type: %s (supported: disk, s3)", backendType)
+		return nil, fmt.Errorf("unknown backend type: %s (supported: disk, s3, gcs)", backendType)
 	}
 
 	if err != nil {
