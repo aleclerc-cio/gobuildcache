@@ -33,8 +33,12 @@ go install github.com/richardartoul/gobuildcache@latest
 
 ## Usage
 
+You can configure `gobuildcache` by passing arguments directly to the program via `GOCACHEPROG`, or by using environment variables. The CLI argument approach is recommended for CI/CD workflows.
+
+### Using CLI Arguments (Recommended)
+
 ```bash
-export GOCACHEPROG=gobuildcache
+export GOCACHEPROG="gobuildcache --backend=disk"
 go build ./...
 go test ./...
 ```
@@ -43,19 +47,25 @@ By default, `gobuildcache` uses an on-disk cache stored in the OS default tempor
 
 For "production" use-cases in CI, you'll want to configure `gobuildcache` to use S3 Express One Zone, Google Cloud Storage, or a similarly low latency distributed backend.
 
-### Using S3
+### Using Environment Variables (Alternative)
 
-```bash
-export BACKEND_TYPE=s3
-export S3_BUCKET=$BUCKET_NAME
-```
-
-You'll also have to provide AWS credentials. `gobuildcache` embeds the AWS V2 S3 SDK so any method of providing credentials to that library will work, but the simplest is to use environment variables as demonstrated below.
+You can also configure `gobuildcache` using environment variables:
 
 ```bash
 export GOCACHEPROG=gobuildcache
-export BACKEND_TYPE=s3
-export S3_BUCKET=$BUCKET_NAME
+export BACKEND_TYPE=disk
+go build ./...
+go test ./...
+```
+
+**Note:** CLI arguments take precedence over environment variables when both are provided.
+
+### Using S3
+
+**Using CLI arguments (recommended):**
+
+```bash
+export GOCACHEPROG="gobuildcache --backend=s3 --s3-bucket=$BUCKET_NAME --s3-prefix=go-build-cache/"
 export AWS_REGION=$BUCKET_REGION
 export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY
 export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
@@ -63,11 +73,41 @@ go build ./...
 go test ./...
 ```
 
-### Using Google Cloud Storage (GCS)
+**Using environment variables:**
 
 ```bash
+export GOCACHEPROG=gobuildcache
+export BACKEND_TYPE=s3
+export S3_BUCKET=$BUCKET_NAME
+export S3_PREFIX=go-build-cache/
+export AWS_REGION=$BUCKET_REGION
+export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY
+export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+go build ./...
+go test ./...
+```
+
+You'll need to provide AWS credentials. `gobuildcache` embeds the AWS V2 S3 SDK so any method of providing credentials to that library will work (environment variables, IAM roles, etc.).
+
+### Using Google Cloud Storage (GCS)
+
+**Using CLI arguments (recommended):**
+
+```bash
+export GOCACHEPROG="gobuildcache --backend=gcs --gcs-bucket=$BUCKET_NAME --gcs-prefix=go-build-cache/"
+go build ./...
+go test ./...
+```
+
+**Using environment variables:**
+
+```bash
+export GOCACHEPROG=gobuildcache
 export BACKEND_TYPE=gcs
 export GCS_BUCKET=$BUCKET_NAME
+export GCS_PREFIX=go-build-cache/
+go build ./...
+go test ./...
 ```
 
 GCS authentication uses Application Default Credentials. You can provide credentials in one of the following ways:
@@ -75,9 +115,7 @@ GCS authentication uses Application Default Credentials. You can provide credent
 1. **Service Account JSON file** (recommended for CI):
 ```bash
 export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account-key.json
-export GOCACHEPROG=gobuildcache
-export BACKEND_TYPE=gcs
-export GCS_BUCKET=$BUCKET_NAME
+export GOCACHEPROG="gobuildcache --backend=gcs --gcs-bucket=$BUCKET_NAME"
 go build ./...
 go test ./...
 ```
@@ -85,9 +123,7 @@ go test ./...
 2. **Metadata service** (when running on GCP):
 ```bash
 # No credentials file needed - uses metadata service automatically
-export GOCACHEPROG=gobuildcache
-export BACKEND_TYPE=gcs
-export GCS_BUCKET=$BUCKET_NAME
+export GOCACHEPROG="gobuildcache --backend=gcs --gcs-bucket=$BUCKET_NAME"
 go build ./...
 go test ./...
 ```
@@ -95,9 +131,7 @@ go test ./...
 3. **gcloud CLI credentials** (for local development):
 ```bash
 gcloud auth application-default login
-export GOCACHEPROG=gobuildcache
-export BACKEND_TYPE=gcs
-export GCS_BUCKET=$BUCKET_NAME
+export GOCACHEPROG="gobuildcache --backend=gcs --gcs-bucket=$BUCKET_NAME"
 go build ./...
 go test ./...
 ```

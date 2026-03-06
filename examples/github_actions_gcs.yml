@@ -22,12 +22,11 @@ jobs:
           cache: false
       - name: Install gobuildcache
         run: go install github.com/richardartoul/gobuildcache@latest
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
       - name: Run short tests
         env:
-          AWS_ENDPOINT_URL_S3: https://t3.storage.dev
-          AWS_ENDPOINT_URL_IAM: https://iam.storage.dev
-          AWS_REGION: auto
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          GOCACHEPROG: "gobuildcache --backend=s3 --s3-bucket=EXAMPLE_BUCKET --s3-prefix=EXAMPLE_PREFIX"
+          GOCACHEPROG: "gobuildcache --backend=gcs --gcs-bucket=${{ secrets.GCS_BUCKET }} --gcs-prefix=go-build-cache/${{ github.repository }}"
         run: go test ./...
