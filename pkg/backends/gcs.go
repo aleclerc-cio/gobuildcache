@@ -29,9 +29,11 @@ func NewGCS(bucket, prefix string) (*GCS, error) {
 	ctx := context.Background()
 
 	// Create GCS client using Application Default Credentials.
-	// WithJSONReads forces the JSON API for downloads (default is XML).
-	// This is required for GCS Anywhere Cache compatibility.
-	client, err := storage.NewClient(ctx, storage.WithJSONReads())
+	// Uses the default XML API which returns custom metadata in the read
+	// response headers (x-goog-meta-*), allowing Get to fetch both metadata
+	// and body in a single HTTP call. Anywhere Cache works transparently
+	// regardless of API choice (JSON/XML/gRPC).
+	client, err := storage.NewClient(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCS client: %w", err)
 	}
@@ -92,49 +94,14 @@ func (g *GCS) Put(actionID, outputID []byte, body io.Reader, bodySize int64) err
 
 // Get retrieves an object from GCS.
 // Returns the object data as an io.ReadCloser that must be closed by the caller.
+//
+// Uses a single NewReader() call which returns both the object body and custom
+// metadata via XML API response headers (x-goog-meta-*). This halves latency
+// compared to the previous Attrs() + NewReader() two-call pattern.
 func (g *GCS) Get(actionID []byte) ([]byte, io.ReadCloser, int64, *time.Time, bool, error) {
 	key := g.actionIDToKey(actionID)
 	obj := g.bucket.Object(key)
 
-	// Get object attributes first to check if it exists and get metadata
-	attrs, err := obj.Attrs(g.ctx)
-	if err != nil {
-		if errors.Is(err, storage.ErrObjectNotExist) {
-			return nil, nil, 0, nil, true, nil
-		}
-		return nil, nil, 0, nil, true, fmt.Errorf("failed to get GCS object attrs: %w", err)
-	}
-
-	// Parse metadata
-	outputIDHex := attrs.Metadata["outputid"]
-	sizeStr := attrs.Metadata["size"]
-	timeStr := attrs.Metadata["time"]
-
-	outputID, err := hex.DecodeString(outputIDHex)
-	if err != nil {
-		return nil, nil, 0, nil, true, nil
-	}
-
-	size, err := strconv.ParseInt(sizeStr, 10, 64)
-	if err != nil {
-		// Fallback to actual object size if metadata is missing
-		size = attrs.Size
-	}
-
-	var putTime *time.Time
-	if timeStr != "" {
-		putTimeUnix, err := strconv.ParseInt(timeStr, 10, 64)
-		if err == nil {
-			t := time.Unix(putTimeUnix, 0)
-			putTime = &t
-		}
-	}
-	// Fallback to object creation time if metadata is missing
-	if putTime == nil {
-		putTime = &attrs.Created
-	}
-
-	// Get a reader for the object
 	reader, err := obj.NewReader(g.ctx)
 	if err != nil {
 		if errors.Is(err, storage.ErrObjectNotExist) {
@@ -143,8 +110,37 @@ func (g *GCS) Get(actionID []byte) ([]byte, io.ReadCloser, int64, *time.Time, bo
 		return nil, nil, 0, nil, true, fmt.Errorf("failed to get GCS object reader: %w", err)
 	}
 
-	// Return the GCS object body as a ReadCloser
-	// The caller is responsible for closing it
+	// Custom metadata is available via reader.Metadata() when using the
+	// XML or gRPC API (the default). Returns nil when using the JSON API.
+	metadata := reader.Metadata()
+	if metadata == nil {
+		reader.Close()
+		return nil, nil, 0, nil, true, fmt.Errorf("GCS reader returned nil metadata for key %s (requires XML or gRPC API)", key)
+	}
+
+	outputID, err := hex.DecodeString(metadata["outputid"])
+	if err != nil {
+		reader.Close()
+		return nil, nil, 0, nil, true, nil
+	}
+
+	size, err := strconv.ParseInt(metadata["size"], 10, 64)
+	if err != nil {
+		size = reader.Attrs.Size
+	}
+
+	var putTime *time.Time
+	if timeStr := metadata["time"]; timeStr != "" {
+		if putTimeUnix, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
+			t := time.Unix(putTimeUnix, 0)
+			putTime = &t
+		}
+	}
+	if putTime == nil {
+		now := time.Now()
+		putTime = &now
+	}
+
 	return outputID, reader, size, putTime, false, nil
 }
 
