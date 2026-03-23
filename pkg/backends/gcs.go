@@ -118,7 +118,13 @@ func (g *GCS) Get(actionID []byte) ([]byte, io.ReadCloser, int64, *time.Time, bo
 		return nil, nil, 0, nil, true, fmt.Errorf("GCS reader returned nil metadata for key %s (requires XML or gRPC API)", key)
 	}
 
-	outputID, err := hex.DecodeString(metadata["outputid"])
+	outputIDHex := metadata["outputid"]
+	if outputIDHex == "" {
+		reader.Close()
+		return nil, nil, 0, nil, true, nil
+	}
+
+	outputID, err := hex.DecodeString(outputIDHex)
 	if err != nil {
 		reader.Close()
 		return nil, nil, 0, nil, true, nil
